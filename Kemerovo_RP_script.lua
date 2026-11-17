@@ -134,7 +134,7 @@ local function toggleEsp(state)
             for _, p in pairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and p.Character then
                     local char = p.Character
-                    local hl = char:FindFirstChild("D1suxaESP")
+                    local hl = char:FindFirstChild("v0xtESP")
                     
                     local teamColor = Color3.fromRGB(255, 255, 255)
                     if p.Team and p.Team.TeamColor then
@@ -143,7 +143,7 @@ local function toggleEsp(state)
 
                     if not hl then
                         hl = Instance.new("Highlight")
-                        hl.Name = "D1suxaESP"
+                        hl.Name = "v0xtESP"
                         hl.Adornee = char
                         hl.OutlineColor = Color3.fromRGB(255, 255, 255)
                         hl.FillTransparency = 0.5
@@ -158,7 +158,7 @@ local function toggleEsp(state)
         if espConn then espConn:Disconnect(); espConn = nil end
         for _, p in pairs(Players:GetPlayers()) do
             if p.Character then
-                local hl = p.Character:FindFirstChild("D1suxaESP")
+                local hl = p.Character:FindFirstChild("v0xtESP")
                 if hl then hl:Destroy() end
             end
         end
@@ -638,7 +638,7 @@ end
 local window = Rayfield:CreateWindow({
     Name = "Kemerovo RP",
     LoadingTitle = "Kemerovo RP Menu",
-    LoadingSubtitle = "by d1suxa",
+    LoadingSubtitle = "by v0xt",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
@@ -728,7 +728,7 @@ miscTab:CreateButton({ Name = "Выгрузить чит", Callback = function()
 
     for _, p in pairs(Players:GetPlayers()) do
         if p.Character then
-            local hl = p.Character:FindFirstChild("D1suxaESP")
+            local hl = p.Character:FindFirstChild("v0xtESP")
             if hl then hl:Destroy() end
         end
     end
