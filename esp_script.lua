@@ -31,7 +31,7 @@ local Window = Library:CreateWindow({
     Center = true,
     AutoShow = true,
     NotifySide = "Right",
-    ShowCustomCursor = true,
+    ShowCustomCursor = false,
 })
 
 --// Tabs
