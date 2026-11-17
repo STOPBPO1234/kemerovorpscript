@@ -723,7 +723,6 @@ miscTab:CreateButton({ Name = "Выгрузить чит", Callback = function()
     if optimizationConnection then optimizationConnection:Disconnect(); optimizationConnection = nil end
     if inputBeganConnection then inputBeganConnection:Disconnect(); inputBeganConnection = nil end
     if inputEndedConnection then inputEndedConnection:Disconnect(); inputEndedConnection = nil end
-    LocalPlayer.CameraMaxZoomDistance = 400
     workspace.CurrentCamera.FieldOfView = 70
 
     for _, p in pairs(Players:GetPlayers()) do
