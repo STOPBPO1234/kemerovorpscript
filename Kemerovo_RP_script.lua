@@ -24,6 +24,13 @@ local originalCharacterParent = LocalPlayer.Character and LocalPlayer.Character.
 local isUnloaded = false
 local driftStrength = 5
 local driftConnection = nil
+
+-- Drift V2: отдельный режим, классический дрифт остаётся без изменений.
+local driftV2Mode = false
+local driftV2Connection = nil
+local driftV2Angle = 17       -- целевой угол бокового скольжения, градусы
+local driftV2Control = 6      -- отзывчивость и помощь стабилизации, 1..10
+
 local isCarFlipRunning = false
 local antiStuckConnection = nil
 
@@ -522,9 +529,106 @@ end
 
 local function updateDriftToggle()
     if driftMode then
-        if not driftConnection then driftConnection = RunService.Heartbeat:Connect(vehicleDriftStep) end
+        if not driftConnection then
+            driftConnection = RunService.Heartbeat:Connect(vehicleDriftStep)
+        end
     else
-        if driftConnection then driftConnection:Disconnect(); driftConnection = nil end
+        if driftConnection then
+            driftConnection:Disconnect()
+            driftConnection = nil
+        end
+    end
+end
+
+-- Drift V2: управляемый занос с плавной реакцией на руль.
+-- A/D задают направление поворота; при отпускании руля скольжение постепенно гасится.
+local function vehicleDriftV2Step(dt)
+    if isUnloaded or not driftV2Mode then return end
+
+    dt = math.clamp(dt or (1 / 60), 1 / 240, 1 / 20)
+
+    local seat = getVehicleSeat()
+    if not seat or seat.Anchored then return end
+
+    local velocity = seat.AssemblyLinearVelocity
+    local flatVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+    local speed = flatVelocity.Magnitude
+    local angularVelocity = seat.AssemblyAngularVelocity
+
+    -- На небольшой скорости не создаём искусственный занос и плавно гасим вращение.
+    if speed < 7 then
+        local angularDamping = math.exp(-4.5 * dt)
+        seat.AssemblyAngularVelocity = Vector3.new(
+            angularVelocity.X * angularDamping,
+            angularVelocity.Y * angularDamping,
+            angularVelocity.Z * angularDamping
+        )
+        return
+    end
+
+    local steer = 0
+    if not UserInputService:GetFocusedTextBox() then
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then steer = steer + 1 end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then steer = steer - 1 end
+    end
+
+    local cf = seat.CFrame
+    local forward = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+    local right = Vector3.new(cf.RightVector.X, 0, cf.RightVector.Z)
+    if forward.Magnitude < 0.001 or right.Magnitude < 0.001 then return end
+    forward = forward.Unit
+    right = right.Unit
+
+    local forwardSpeed = flatVelocity:Dot(forward)
+    local lateralSpeed = flatVelocity:Dot(right)
+    local control = math.clamp(driftV2Control, 1, 10) / 10
+    local speedFactor = math.clamp((speed - 7) / 28, 0, 1)
+
+    -- Целевое боковое скольжение. Угол ограничивает занос, а плавный отклик
+    -- не позволяет скорости резко перескакивать вбок при нажатии A/D.
+    local angle = math.rad(math.clamp(driftV2Angle, 5, 35))
+    local targetLateralSpeed = steer * speed * math.sin(angle) * speedFactor
+    local lateralResponse = (steer == 0) and (1.4 + control * 3.2) or (2.0 + control * 4.8)
+    local lateralAlpha = 1 - math.exp(-lateralResponse * dt)
+    local newLateralSpeed = lateralSpeed + (targetLateralSpeed - lateralSpeed) * lateralAlpha
+
+    -- Не даём боковой составляющей превысить выбранный угол заноса.
+    local maxLateralSpeed = speed * math.sin(math.rad(math.clamp(driftV2Angle + 8, 8, 43)))
+    newLateralSpeed = math.clamp(newLateralSpeed, -maxLateralSpeed, maxLateralSpeed)
+
+    -- Сохраняем общую горизонтальную скорость, меняя её направление, а не добавляя разгон.
+    local forwardSign = (forwardSpeed >= 0) and 1 or -1
+    local newForwardSpeed = forwardSign * math.sqrt(math.max(speed * speed - newLateralSpeed * newLateralSpeed, 0))
+    local newFlatVelocity = forward * newForwardSpeed + right * newLateralSpeed
+    seat.AssemblyLinearVelocity = Vector3.new(newFlatVelocity.X, velocity.Y, newFlatVelocity.Z)
+
+    -- Поворот кузова следует за рулём с ограничением угловой скорости.
+    -- Контрруление (нажатие противоположной A/D) помогает быстро поймать машину.
+    local maxYawRate = 0.35 + 1.75 * speedFactor
+    local targetYawRate = steer * maxYawRate
+    local yawResponse = 2.0 + control * 5.5
+    local yawAlpha = 1 - math.exp(-yawResponse * dt)
+    local newYawRate = angularVelocity.Y + (targetYawRate - angularVelocity.Y) * yawAlpha
+    newYawRate = math.clamp(newYawRate, -maxYawRate * 1.15, maxYawRate * 1.15)
+
+    local bodyDamping = math.exp(-4.0 * dt)
+    seat.AssemblyAngularVelocity = Vector3.new(
+        angularVelocity.X * bodyDamping,
+        newYawRate,
+        angularVelocity.Z * bodyDamping
+    )
+end
+
+local function updateDriftV2Toggle()
+    if driftV2Mode then
+        if not driftV2Connection then
+            driftV2Connection = RunService.Heartbeat:Connect(vehicleDriftV2Step)
+        end
+    else
+        if driftV2Connection then
+            driftV2Connection:Disconnect()
+            driftV2Connection = nil
+        end
     end
 end
 
@@ -534,7 +638,7 @@ end
 local window = Rayfield:CreateWindow({
     Name = "Kemerovo RP",
     LoadingTitle = "Kemerovo RP Menu",
-    LoadingSubtitle = "by v0xt",
+    LoadingSubtitle = "by d1suxa",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
@@ -565,17 +669,48 @@ flightTab:CreateSlider({ Name = "Скорость полета", Range = {0, 800
 flightTab:CreateLabel("| Q = вниз | E = вверх |")
 
 miscTab:CreateSection("Дрифт и Мир")
-miscTab:CreateToggle({ Name = "Режим Дрифта", CurrentValue = driftMode, Flag = "Tg2", Callback = function(v) driftMode = v; updateDriftToggle() end })
+local classicDriftToggleControl
+local driftV2ToggleControl
+
+classicDriftToggleControl = miscTab:CreateToggle({
+    Name = "Режим Дрифта",
+    CurrentValue = driftMode,
+    Flag = "Tg2",
+    Callback = function(v)
+        if v and driftV2Mode and driftV2ToggleControl then
+            driftV2ToggleControl:Set(false)
+        end
+        driftMode = v
+        updateDriftToggle()
+    end
+})
 miscTab:CreateSlider({ Name = "Сила Дрифта", Range = {1, 10}, Increment = 1, CurrentValue = driftStrength, Flag = "Sl5", Callback = function(v) driftStrength = v end })
+
+driftV2ToggleControl = miscTab:CreateToggle({
+    Name = "Дрифт V2 (управляемый занос)",
+    CurrentValue = driftV2Mode,
+    Flag = "TgDriftV2",
+    Callback = function(v)
+        if v and driftMode and classicDriftToggleControl then
+            classicDriftToggleControl:Set(false)
+        end
+        driftV2Mode = v
+        updateDriftV2Toggle()
+    end
+})
+miscTab:CreateSlider({ Name = "V2: Угол заноса", Range = {5, 35}, Increment = 1, CurrentValue = driftV2Angle, Flag = "SlDriftV2Angle", Callback = function(v) driftV2Angle = v end })
+miscTab:CreateSlider({ Name = "V2: Помощь управления", Range = {1, 10}, Increment = 1, CurrentValue = driftV2Control, Flag = "SlDriftV2Control", Callback = function(v) driftV2Control = v end })
+miscTab:CreateLabel("V2: A/D — руль | противоположное нажатие — контрруление")
 
 miscTab:CreateSection("Выгрузка чита")
 miscTab:CreateButton({ Name = "Выгрузить чит", Callback = function()
     isUnloaded = true
-    flightEnabled = false; driftMode = false; playerFlyEnabled = false; noclipEnabled = false; clickTpEnabled = false; playerSpeedEnabled = false; fullbrightEnabled = false; fovEnabled = false; espEnabled = false; noFallDamageEnabled = false; jumpPowerEnabled = false; maxZoomEnabled = false
+    flightEnabled = false; driftMode = false; driftV2Mode = false; playerFlyEnabled = false; noclipEnabled = false; clickTpEnabled = false; playerSpeedEnabled = false; fullbrightEnabled = false; fovEnabled = false; espEnabled = false; noFallDamageEnabled = false; jumpPowerEnabled = false; maxZoomEnabled = false
     if antiStuckConnection then antiStuckConnection:Disconnect(); antiStuckConnection = nil end
     if activeFlyConnection then activeFlyConnection:Disconnect(); activeFlyConnection = nil end
     if activeBrakeConnection then activeBrakeConnection:Disconnect(); activeBrakeConnection = nil end
     if driftConnection then driftConnection:Disconnect(); driftConnection = nil end
+    if driftV2Connection then driftV2Connection:Disconnect(); driftV2Connection = nil end
     if clickTpConn then clickTpConn:Disconnect(); clickTpConn = nil end
     if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
     if playerFlyConn then playerFlyConn:Disconnect(); playerFlyConn = nil end
@@ -588,6 +723,7 @@ miscTab:CreateButton({ Name = "Выгрузить чит", Callback = function()
     if optimizationConnection then optimizationConnection:Disconnect(); optimizationConnection = nil end
     if inputBeganConnection then inputBeganConnection:Disconnect(); inputBeganConnection = nil end
     if inputEndedConnection then inputEndedConnection:Disconnect(); inputEndedConnection = nil end
+    LocalPlayer.CameraMaxZoomDistance = 400
     workspace.CurrentCamera.FieldOfView = 70
 
     for _, p in pairs(Players:GetPlayers()) do
