@@ -798,6 +798,265 @@ tpTab:CreateButton({ Name = "Телепортироваться", Callback = fun
     end
 end})
 
+
+-- ==========================================
+-- TELEPORT V3
+-- ==========================================
+
+tpTab:CreateSection("TELEPORT V3")
+
+local playerList = getTeleportTarget and {} or {}
+
+local function refreshTeleportPlayers()
+    local list = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(list, player.Name)
+        end
+    end
+
+    table.sort(list)
+    return list
+end
+
+playerList = refreshTeleportPlayers()
+targetPlayerName = playerList[1] or ""
+
+local playerDropdown = tpTab:CreateDropdown({
+    Name = "Выберите игрока",
+    Options = playerList,
+    CurrentOption = targetPlayerName,
+    Flag = "Dd1",
+    Callback = function(option)
+        if typeof(option) == "table" then
+            targetPlayerName = option[1] or ""
+        else
+            targetPlayerName = option or ""
+        end
+    end
+})
+
+-- Получение выбранного игрока
+local function getV3Target()
+    local target = Players:FindFirstChild(targetPlayerName)
+
+    if not target or target == LocalPlayer then
+        warn("[TP V3] Выберите игрока!")
+        return nil
+    end
+
+    local character = target.Character
+    if not character then
+        warn("[TP V3] Персонаж не загружен!")
+        return nil
+    end
+
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local hum = character:FindFirstChildOfClass("Humanoid")
+
+    if not hrp or not hum then
+        warn("[TP V3] Не удалось найти персонажа!")
+        return nil
+    end
+
+    return target, character, hrp, hum
+end
+
+-- Поиск автомобиля по сиденью
+local function getV3CarFromSeat(seat)
+    if not seat then return nil end
+
+    local model = seat:FindFirstAncestorWhichIsA("Model")
+
+    while model do
+        if model:FindFirstChildWhichIsA("VehicleSeat", true) then
+            return model
+        end
+
+        model = model.Parent
+        if model and not model:IsA("Model") then
+            return nil
+        end
+    end
+
+    return nil
+end
+
+-- Обновление списка
+tpTab:CreateButton({
+    Name = "Обновить игроков",
+    Callback = function()
+        playerList = refreshTeleportPlayers()
+        targetPlayerName = playerList[1] or ""
+
+        playerDropdown:Refresh(playerList)
+
+        print("[TP V3] Список обновлён")
+    end
+})
+
+-- ==========================================
+-- MODE 1: TELEPORT ON FOOT
+-- ==========================================
+
+tpTab:CreateButton({
+    Name = "1. ТП пешком к игроку",
+    Callback = function()
+        local target, character, targetHRP = getV3Target()
+        if not targetHRP then return end
+
+        local myChar = LocalPlayer.Character
+        if not myChar then return end
+
+        local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+        if not myHRP then return end
+
+        pcall(function()
+            LocalPlayer:RequestStreamAroundAsync(targetHRP.Position)
+        end)
+
+        task.wait(0.3)
+
+        myChar:PivotTo(
+            targetHRP.CFrame * CFrame.new(0, 0, -5)
+        )
+
+        myHRP.AssemblyLinearVelocity = Vector3.zero
+        myHRP.AssemblyAngularVelocity = Vector3.zero
+
+        print("[TP V3] ТП пешком")
+    end
+})
+
+-- ==========================================
+-- MODE 2: TELEPORT WITH OWN CAR
+-- ==========================================
+
+tpTab:CreateButton({
+    Name = "2. ТП своей машиной",
+    Callback = function()
+        local target, character, targetHRP = getV3Target()
+        if not targetHRP then return end
+
+        local seat = getVehicleSeat()
+
+        if not seat then
+            warn("[TP V3] Сначала сядь в свою машину!")
+            return
+        end
+
+        local car = getCarModel(seat)
+
+        if not car or not car:IsA("Model") then
+            warn("[TP V3] Машина не найдена!")
+            return
+        end
+
+        pcall(function()
+            LocalPlayer:RequestStreamAroundAsync(targetHRP.Position)
+        end)
+
+        task.wait(0.3)
+
+        car:PivotTo(
+            targetHRP.CFrame * CFrame.new(0, 0, -10)
+        )
+
+        for _, part in ipairs(car:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+
+        print("[TP V3] Машина перемещена")
+    end
+})
+
+-- ==========================================
+-- MODE 3: PASSENGER TELEPORT
+-- ==========================================
+
+tpTab:CreateButton({
+    Name = "3. ТП на пассажирское место",
+    Callback = function()
+        local target, character, targetHRP, targetHum =
+            getV3Target()
+
+        if not targetHum then return end
+
+        local targetSeat = targetHum.SeatPart
+
+        if not targetSeat then
+            warn("[TP V3] Игрок не сидит в машине!")
+            return
+        end
+
+        local targetCar = getV3CarFromSeat(targetSeat)
+
+        if not targetCar then
+            warn("[TP V3] Машина игрока не найдена!")
+            return
+        end
+
+        -- Ищем свободное пассажирское место
+        local freeSeat = nil
+
+        for _, obj in ipairs(targetCar:GetDescendants()) do
+            if obj:IsA("Seat") or obj:IsA("VehicleSeat") then
+                if obj.Occupant == nil and obj ~= targetSeat then
+                    if obj:IsA("Seat") then
+                        freeSeat = obj
+                        break
+                    elseif not freeSeat then
+                        freeSeat = obj
+                    end
+                end
+            end
+        end
+
+        if not freeSeat then
+            warn("[TP V3] Нет свободных мест!")
+            return
+        end
+
+        local myChar = LocalPlayer.Character
+        if not myChar then return end
+
+        local myHum = myChar:FindFirstChildOfClass("Humanoid")
+        local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+
+        if not myHum or not myHRP then return end
+
+        pcall(function()
+            LocalPlayer:RequestStreamAroundAsync(
+                freeSeat.Position
+            )
+        end)
+
+        task.wait(0.3)
+
+        myChar:PivotTo(
+            freeSeat.CFrame * CFrame.new(0, 2, 0)
+        )
+
+        task.wait(0.2)
+
+        freeSeat:Sit(myHum)
+
+        print("[TP V3] Попытка посадки в машину игрока")
+    end
+})
+
+tpTab:CreateSection("TELEPORT V3 INFO")
+
+tpTab:CreateLabel("1 — Телепорт пешком")
+tpTab:CreateLabel("2 — Телепорт своей машиной")
+tpTab:CreateLabel("3 — Посадка в машину игрока")
+tpTab:CreateLabel("Для режима 3 игрок должен быть в машине")
+
+
 visTab:CreateSection("Подсветка игроков (ESP)")
 visTab:CreateToggle({ Name = "ESP (Подсветка по цветам команд)", CurrentValue = espEnabled, Flag = "TgESP", Callback = function(v) toggleEsp(v) end })
 
